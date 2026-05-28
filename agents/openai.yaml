@@ -1,0 +1,4 @@
+interface:
+  display_name: "CS WebLatch"
+  short_description: "Bridge Codex to AI web chats through a local Latch bridge."
+  default_prompt: "Use CS WebLatch ($cs-weblatch) to ask an AI web chat in Chrome and return the completed response."

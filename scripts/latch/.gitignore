@@ -1,0 +1,6 @@
+.latch/
+.chatgpt-watch/
+node_modules/
+npm-debug.log*
+*.log
+latch-test-prompt.txt
