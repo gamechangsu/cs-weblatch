@@ -111,6 +111,7 @@ async function waitForHealth(timeoutMs) {
     if (!health.ok) throw new Error("Health check did not return ok");
 
     const posted = await requestJson("POST", "/events", {
+      service: "chatgpt",
       status: "done",
       url: "https://chatgpt.com/c/smoke",
       title: "ChatGPT",
@@ -130,6 +131,7 @@ async function waitForHealth(timeoutMs) {
     }
 
     await requestJson("POST", "/events", {
+      service: "chatgpt",
       status: "done",
       url: "https://chatgpt.com/c/noise",
       conversationId: "noise",
@@ -142,7 +144,53 @@ async function waitForHealth(timeoutMs) {
       throw new Error("Filtered latest event mismatch");
     }
 
+    const serviceCases = [
+      { service: "gemini", url: "https://gemini.google.com/app/smoke", assistantText: "gemini pong" },
+      { service: "claude", url: "https://claude.ai/chat/smoke", assistantText: "claude pong" },
+      { service: "aistudio", url: "https://aistudio.google.com/prompts/smoke", assistantText: "aistudio pong" }
+    ];
+
+    for (const item of serviceCases) {
+      await requestJson("POST", "/events", {
+        service: item.service,
+        status: "done",
+        url: item.url,
+        conversationId: "smoke",
+        userText: "ping",
+        assistantText: item.assistantText
+      });
+
+      const serviceFiltered = await requestJson("GET", `/latest?service=${item.service}&status=done&userTextHash=${stableHash("ping")}`);
+      if (serviceFiltered.service !== item.service || serviceFiltered.assistantText !== item.assistantText) {
+        throw new Error(`${item.service} service-filtered latest event mismatch`);
+      }
+    }
+
     await requestJson("POST", "/events", {
+      service: "claude",
+      status: "idle",
+      url: "https://claude.ai/chat/other",
+      conversationId: "other",
+      tabId: 777
+    });
+
+    const serviceScopedWatch = await runWait([
+      "--url", BASE_URL,
+      "--service", "chatgpt",
+      "--after-id", "0",
+      "--conversation", "target",
+      "--tab-id", "777",
+      "--watch-lost",
+      "--json",
+      "--once"
+    ]);
+    const serviceScopedWatchEvent = JSON.parse(serviceScopedWatch.stdout);
+    if (serviceScopedWatchEvent.status === "watch_lost") {
+      throw new Error("Service-scoped watch-lost matched another service");
+    }
+
+    await requestJson("POST", "/events", {
+      service: "chatgpt",
       status: "idle",
       url: "https://chatgpt.com/c/other",
       conversationId: "other",
@@ -164,6 +212,7 @@ async function waitForHealth(timeoutMs) {
     }
 
     await requestJson("POST", "/events", {
+      service: "chatgpt",
       status: "streaming",
       url: "https://chatgpt.com/c/target",
       conversationId: "target",

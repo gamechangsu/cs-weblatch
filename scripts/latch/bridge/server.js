@@ -84,11 +84,36 @@ function trimText(value) {
 function conversationIdFromUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
-    const match = url.pathname.match(/\/c\/([^/]+)/);
+    const service = serviceFromUrl(rawUrl);
+    const patterns = {
+      chatgpt: /\/c\/([^/]+)/,
+      gemini: /\/(?:app|chat)\/([^/?#]+)/,
+      claude: /\/chat\/([^/?#]+)/,
+      aistudio: /\/(?:app\/)?(?:prompts|chats|chat)\/([^/?#]+)/
+    };
+    const pattern = patterns[service] || /\/c\/([^/]+)/;
+    const match = url.pathname.match(pattern);
     return match ? match[1] : "";
   } catch {
     return "";
   }
+}
+
+function serviceFromUrl(rawUrl) {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase();
+    if (host === "chatgpt.com" || host === "chat.openai.com") return "chatgpt";
+    if (host === "gemini.google.com") return "gemini";
+    if (host === "claude.ai" || host.endsWith(".claude.ai")) return "claude";
+    if (host === "aistudio.google.com") return "aistudio";
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+function conversationKey(service, conversationId) {
+  return `${service || "unknown"}:${conversationId || ""}`;
 }
 
 function stableHash(value) {
@@ -113,11 +138,14 @@ function normalizeStatus(value) {
 function normalizeEvent(payload) {
   const now = new Date().toISOString();
   const rawUrl = String(payload.url || "");
+  const service = String(payload.service || serviceFromUrl(rawUrl) || "unknown");
   const event = {
     id: nextId++,
     receivedAt: now,
     source: "latch-extension",
     kind: String(payload.kind || "latch-state"),
+    service,
+    serviceLabel: String(payload.serviceLabel || service),
     status: normalizeStatus(payload.status),
     url: rawUrl,
     title: String(payload.title || ""),
@@ -149,6 +177,7 @@ function normalizeEvent(payload) {
   }
 
   event.fingerprint = String(payload.fingerprint || stableHash({
+    service: event.service,
     status: event.status,
     url: event.url,
     conversationId: event.conversationId,
@@ -185,7 +214,7 @@ function rememberEvent(event) {
   if (!event.userTextHash) event.userTextHash = eventTextHash(event.userText);
   if (!event.assistantTextHash) event.assistantTextHash = eventTextHash(event.assistantText);
   latest = event;
-  if (event.conversationId) latestByConversation.set(event.conversationId, event);
+  if (event.conversationId) latestByConversation.set(conversationKey(event.service, event.conversationId), event);
   events.push(event);
   if (events.length > MAX_EVENTS) events = events.slice(-MAX_EVENTS);
 }
@@ -206,6 +235,7 @@ async function storeEvent(payload) {
 function logEvent(event) {
   const label = [
     `#${event.id}`,
+    event.service || "unknown",
     event.status,
     event.conversationId || "new-chat",
     event.assistantText ? `${event.assistantText.length} chars` : "no text"
@@ -222,7 +252,11 @@ function broadcast(event) {
   for (const client of streams) {
     if (!eventMatchesQuery(event, client.url)) continue;
     try {
-      writeSse(client.res, "chatgpt", event);
+      writeSse(client.res, "latch", event);
+      if ((event.service || "chatgpt") === "chatgpt") {
+        writeSse(client.res, "chatgpt", event);
+      }
+      writeSse(client.res, event.service || "unknown", event);
     } catch {
       streams.delete(client);
     }
@@ -270,6 +304,7 @@ function parseOptionalNumber(value) {
 }
 
 function eventMatchesQuery(event, url) {
+  const service = url.searchParams.get("service") || "";
   const status = url.searchParams.get("status") || "";
   const conversationId = url.searchParams.get("conversationId") || "";
   const pageSessionId = url.searchParams.get("pageSessionId") || "";
@@ -278,6 +313,7 @@ function eventMatchesQuery(event, url) {
   const tabId = parseOptionalNumber(url.searchParams.get("tabId"));
   const afterId = parseOptionalNumber(url.searchParams.get("afterId"));
 
+  if (service && event.service !== service) return false;
   if (status && event.status !== status) return false;
   if (conversationId && event.conversationId !== conversationId) return false;
   if (pageSessionId && event.pageSessionId !== pageSessionId) return false;
@@ -341,8 +377,10 @@ async function loadState() {
   for (const event of loaded) {
     if (!event.userTextHash) event.userTextHash = eventTextHash(event.userText);
     if (!event.assistantTextHash) event.assistantTextHash = eventTextHash(event.assistantText);
+    if (!event.service) event.service = serviceFromUrl(event.url);
+    if (!event.serviceLabel) event.serviceLabel = event.service;
     latest = event;
-    if (event.conversationId) latestByConversation.set(event.conversationId, event);
+    if (event.conversationId) latestByConversation.set(conversationKey(event.service, event.conversationId), event);
     if (Number.isFinite(event.id) && event.id >= nextId) nextId = event.id + 1;
   }
 }
@@ -438,7 +476,7 @@ function dashboardHtml() {
         $('latest').textContent = String(error);
       });
       const source = new EventSource('/stream');
-      source.addEventListener('chatgpt', refresh);
+      source.addEventListener('latch', refresh);
     </script>
   </body>
 </html>`;
@@ -446,8 +484,13 @@ function dashboardHtml() {
 
 function metrics() {
   const statusCounts = {};
+  const serviceCounts = {};
   for (const status of VALID_STATUSES) statusCounts[status] = 0;
-  for (const event of events) statusCounts[event.status] = (statusCounts[event.status] || 0) + 1;
+  for (const event of events) {
+    statusCounts[event.status] = (statusCounts[event.status] || 0) + 1;
+    const service = event.service || "unknown";
+    serviceCounts[service] = (serviceCounts[service] || 0) + 1;
+  }
   return {
     ok: true,
     uptimeSec: (Date.now() - startedAt) / 1000,
@@ -456,6 +499,7 @@ function metrics() {
     latestStatus: latest ? latest.status : null,
     conversations: latestByConversation.size,
     statusCounts,
+    serviceCounts,
     dataDir: DATA_DIR,
     tokenRequired: Boolean(TOKEN)
   };

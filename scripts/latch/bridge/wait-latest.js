@@ -10,11 +10,13 @@ const args = process.argv.slice(2);
 const opts = {
   baseUrl: valueAfter("--url") || DEFAULT_URL,
   token: valueAfter("--token") || DEFAULT_TOKEN,
+  service: valueAfter("--service") || "",
   status: valueAfter("--status") || "done",
   conversationId: valueAfter("--conversation") || "",
   pageSessionId: valueAfter("--page-session") || "",
   tabId: valueAfter("--tab-id") || "",
   afterId: valueAfter("--after-id") || "",
+  targetUrl: valueAfter("--target-url") || "",
   prompt: valueAfter("--prompt") || "",
   promptFile: valueAfter("--prompt-file") || "",
   timeoutMs: Number(valueAfter("--timeout") || 10 * 60 * 1000),
@@ -31,11 +33,13 @@ if (opts.help) {
 Options:
   --url <url>             Bridge URL. Default: ${DEFAULT_URL}
   --token <token>         Optional bridge token.
+  --service <name>        Restrict to one service: chatgpt, gemini, claude, or aistudio.
   --status <status>       Status to wait for. Default: done
-  --conversation <id>     Restrict to one ChatGPT conversation id.
+  --conversation <id>     Restrict to one service conversation/chat id.
   --page-session <id>     Restrict to one Latch page session id.
   --tab-id <id>           Restrict to one Chrome tab id.
   --after-id <id>         Only match events after this bridge event id.
+  --target-url <url>      URL to reopen when --watch-lost detects target tab movement.
   --prompt <text>         Only match events whose latest user prompt equals this text.
   --prompt-file <path>    Like --prompt, but reads the exact prompt from a UTF-8 file.
   --watch-lost            Return watch_lost if the target tab leaves the target conversation.
@@ -83,17 +87,38 @@ function promptHashCandidates() {
   return Array.from(new Set(prompts.map(stableHash)));
 }
 
+function compactPrompt(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function promptMatchesEvent(event) {
+  const prompt = promptText();
+  if (!prompt) return true;
+
+  const hashes = promptHashCandidates();
+  if (hashes.includes(event.userTextHash)) return true;
+
+  const eventText = compactPrompt(event.userText);
+  const promptTextValue = compactPrompt(prompt);
+  return Boolean(eventText && promptTextValue && eventText.includes(promptTextValue));
+}
+
 function filterValues(options = {}) {
   if (options.watchScope) {
     return {
+      service: opts.service,
       tabId: opts.tabId,
       afterId: opts.afterId
     };
   }
 
   const hashes = promptHashCandidates();
-  const includePromptHash = options.includePromptHash !== false && hashes.length === 1;
+  const includePromptHash = options.includePromptHash === true && hashes.length === 1;
   return {
+    service: opts.service,
     status: opts.status,
     conversationId: opts.conversationId,
     pageSessionId: opts.pageSessionId,
@@ -152,17 +177,19 @@ function matches(event) {
   const filters = filterValues({ includePromptHash: false });
   const userTextHashes = promptHashCandidates();
   if (filters.status && event.status !== filters.status) return false;
+  if (filters.service && event.service !== filters.service) return false;
   if (filters.conversationId && event.conversationId !== filters.conversationId) return false;
   if (filters.pageSessionId && event.pageSessionId !== filters.pageSessionId) return false;
   if (filters.tabId && Number(event.tabId) !== Number(filters.tabId)) return false;
   if (filters.afterId && Number(event.id) <= Number(filters.afterId)) return false;
-  if (userTextHashes.length && !userTextHashes.includes(event.userTextHash)) return false;
+  if (userTextHashes.length && !promptMatchesEvent(event)) return false;
   return true;
 }
 
 function isWatchLost(event) {
   if (!opts.watchLost || !opts.conversationId || !opts.tabId) return false;
   if (!isAfterTarget(event)) return false;
+  if (opts.service && event.service !== opts.service) return false;
   if (Number(event.tabId) !== Number(opts.tabId)) return false;
   return event.conversationId !== opts.conversationId;
 }
@@ -174,13 +201,25 @@ function watchLostEvent(event) {
     status: "watch_lost",
     reason: "target_tab_left_conversation",
     target: {
+      service: opts.service || event.service || "",
       conversationId: opts.conversationId,
       tabId: Number(opts.tabId),
       afterId: opts.afterId ? Number(opts.afterId) : null,
-      url: `https://chatgpt.com/c/${opts.conversationId}`
+      url: opts.targetUrl || conversationUrl(opts.service || event.service || "chatgpt", opts.conversationId)
     },
     observedEvent: event
   };
+}
+
+function conversationUrl(service, conversationId) {
+  if (service === "chatgpt" && conversationId) return `https://chatgpt.com/c/${conversationId}`;
+  if (service === "claude" && conversationId) return `https://claude.ai/chat/${conversationId}`;
+  if (service === "gemini" && conversationId) return `https://gemini.google.com/app/${conversationId}`;
+  if (service === "aistudio" && conversationId) return `https://aistudio.google.com/prompts/${conversationId}`;
+  if (service === "claude") return "https://claude.ai/";
+  if (service === "gemini") return "https://gemini.google.com/";
+  if (service === "aistudio") return "https://aistudio.google.com/";
+  return "https://chatgpt.com/";
 }
 
 function latestMatchingEvent(events) {
@@ -196,6 +235,7 @@ function currentWatchLostEvent(events) {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const event = events[index];
     if (!isAfterTarget(event)) continue;
+    if (opts.service && event.service !== opts.service) continue;
     if (!opts.tabId || Number(event.tabId) !== Number(opts.tabId)) continue;
     return watchLostEvent(event);
   }
