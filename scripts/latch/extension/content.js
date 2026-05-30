@@ -53,6 +53,46 @@
       modelPattern: /gpt|pro|thinking|heavy|instant|model|헤비|확장|모드|모델|생각/i
     },
     {
+      service: "gemini_canvas",
+      label: "Gemini Canvas",
+      hosts: ["gemini.google.com"],
+      isActive() {
+        return Boolean(geminiCanvasRoot());
+      },
+      latestMessage(role) {
+        if (role === "assistant") {
+          const root = geminiCanvasRoot();
+          const text = root ? geminiCanvasText(root) : "";
+          return { node: root, text };
+        }
+
+        return latestBySelectors([
+          '[data-test-id="user-query"]',
+          '[data-testid="user-query"]',
+          '[data-test-id*="user" i][data-test-id*="query" i]',
+          '[data-testid*="user" i][data-testid*="query" i]',
+          '[class*="user-query" i]',
+          '[class*="query-text" i]',
+          'user-query',
+          'message-content:has([class*="user" i])'
+        ]);
+      },
+      messages: {
+        user: [],
+        assistant: []
+      },
+      conversationId() {
+        const match = location.pathname.match(/\/(?:app|chat|canvas)\/([^/?#]+)/);
+        return match ? match[1] : "";
+      },
+      modelPattern: /gemini|flash|pro|thinking|deep research|model/i,
+      actionPattern: /copy|share|export|preview|open|regenerate|retry/i,
+      artifactLinks() {
+        const root = geminiCanvasRoot();
+        return root ? geminiCanvasLinks(root) : [];
+      }
+    },
+    {
       service: "gemini",
       label: "Gemini",
       hosts: ["gemini.google.com"],
@@ -175,7 +215,7 @@
     }
   ];
 
-  const adapter = adapterForLocation();
+  let adapter = adapterForLocation();
   if (!adapter) return;
 
   const state = {
@@ -183,6 +223,7 @@
     sequence: 0,
     pageSessionId: makeId(),
     lastUrl: location.href,
+    lastService: adapter.service,
     lastAssistantText: "",
     lastAssistantChangedAt: Date.now(),
     lastFingerprint: "",
@@ -196,7 +237,10 @@
 
   function adapterForLocation() {
     const host = location.hostname.toLowerCase();
-    return ADAPTERS.find(item => item.hosts.some(candidate => host === candidate || host.endsWith(`.${candidate}`)));
+    return ADAPTERS.find(item => {
+      const hostMatches = item.hosts.some(candidate => host === candidate || host.endsWith(`.${candidate}`));
+      return hostMatches && (typeof item.isActive !== "function" || item.isActive());
+    });
   }
 
   function qsa(selector, root = document) {
@@ -236,6 +280,91 @@
     return text && text.length > 1 ? text : "";
   }
 
+  function latestBySelectors(selectors) {
+    const nodes = selectors
+      .flatMap(selector => qsa(selector))
+      .filter(isVisible)
+      .filter(node => usefulText(node));
+
+    if (!nodes.length) return { node: null, text: "" };
+
+    const node = nodes[nodes.length - 1];
+    return { node, text: usefulText(node) };
+  }
+
+  function geminiCanvasRoot() {
+    const selectors = [
+      '[data-testid*="canvas" i]',
+      '[data-test-id*="canvas" i]',
+      '[aria-label*="canvas" i]',
+      '[class*="canvas" i]',
+      '[data-testid*="artifact" i]',
+      '[data-test-id*="artifact" i]',
+      '[aria-label*="artifact" i]',
+      '[class*="artifact" i]',
+      '[class*="editor" i]',
+      '[class*="preview" i]'
+    ];
+
+    const candidates = selectors
+      .flatMap(selector => qsa(selector))
+      .filter(node => node !== document.body && node !== document.documentElement)
+      .filter(isVisible)
+      .map(node => {
+        const text = usefulText(node);
+        const rect = node.getBoundingClientRect();
+        const label = controlLabel(node);
+        let score = text.length + (rect.width * rect.height) / 2000;
+        if (/canvas|artifact|editor|preview/i.test(label)) score += 1000;
+        if (/nav|menu|sidebar|button/i.test(String(node.className || ""))) score -= 500;
+        return { node, text, rect, score };
+      })
+      .filter(item => item.text.length >= 80)
+      .filter(item => item.rect.width >= 300 && item.rect.height >= 120)
+      .sort((left, right) => right.score - left.score);
+
+    return candidates.length ? candidates[0].node : null;
+  }
+
+  function geminiCanvasText(root) {
+    const structuredNodes = [
+      ...qsa('pre, code, [class*="cm-line" i], [class*="view-line" i], [class*="monaco" i], [contenteditable="true"], textarea', root),
+      root
+    ]
+      .filter(isVisible)
+      .filter(node => !node.closest('button,[role="button"],nav,[role="navigation"],[role="menu"],[role="toolbar"]'))
+      .map(usefulText)
+      .filter(Boolean);
+
+    const deduped = [];
+    const seen = new Set();
+    for (const text of structuredNodes) {
+      const key = hashText(text);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(text);
+    }
+
+    const links = geminiCanvasLinks(root);
+    const linkText = links.length
+      ? `Canvas artifact links:\n${links.map(link => `- ${link.label}: ${link.href}`).join("\n")}`
+      : "";
+    const joined = [...deduped, linkText].filter(Boolean).join("\n\n");
+    const rootText = usefulText(root);
+    return truncate(joined.length >= Math.min(rootText.length, 400) ? joined : rootText);
+  }
+
+  function geminiCanvasLinks(root) {
+    return qsa("a[href]", root)
+      .filter(isVisible)
+      .map(anchor => ({
+        label: truncate(textOf(anchor) || anchor.getAttribute("aria-label") || "artifact"),
+        href: String(anchor.href || anchor.getAttribute("href") || "")
+      }))
+      .filter(link => link.href && /docs\.google\.com|gemini\.google\.com|usercontent|sandbox|preview|canvas|app/i.test(link.href))
+      .slice(0, 20);
+  }
+
   function hashText(value) {
     let hash = 2166136261;
     const text = String(value || "");
@@ -253,15 +382,7 @@
     }
 
     const selectors = adapter.messages && adapter.messages[role] ? adapter.messages[role] : [];
-    const nodes = selectors
-      .flatMap(selector => qsa(selector))
-      .filter(isVisible)
-      .filter(node => usefulText(node));
-
-    if (!nodes.length) return { node: null, text: "" };
-
-    const node = nodes[nodes.length - 1];
-    return { node, text: usefulText(node) };
+    return latestBySelectors(selectors);
   }
 
   function composerText() {
@@ -353,7 +474,23 @@
     state.lastHeartbeatAt = 0;
   }
 
+  function resetForAdapterChange() {
+    const nextAdapter = adapterForLocation();
+    if (!nextAdapter) return false;
+    if (nextAdapter.service === adapter.service) return true;
+
+    adapter = nextAdapter;
+    state.lastService = adapter.service;
+    state.pageSessionId = makeId();
+    state.lastAssistantText = "";
+    state.lastAssistantChangedAt = Date.now();
+    state.lastFingerprint = "";
+    state.lastHeartbeatAt = 0;
+    return true;
+  }
+
   function analyze() {
+    if (!resetForAdapterChange()) return;
     resetForUrlChange();
 
     const now = Date.now();
@@ -416,6 +553,7 @@
       thinkingLabel: doneThinkingLabel,
       errorText,
       modelLabel: currentModelLabel,
+      artifactLinks: typeof adapter.artifactLinks === "function" ? adapter.artifactLinks() : [],
       fingerprint,
       observedAt: new Date().toISOString(),
       signals: {

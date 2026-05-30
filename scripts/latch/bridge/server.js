@@ -87,6 +87,7 @@ function conversationIdFromUrl(rawUrl) {
     const service = serviceFromUrl(rawUrl);
     const patterns = {
       chatgpt: /\/c\/([^/]+)/,
+      gemini_canvas: /\/(?:app|chat|canvas)\/([^/?#]+)/,
       gemini: /\/(?:app|chat)\/([^/?#]+)/,
       claude: /\/chat\/([^/?#]+)/,
       aistudio: /\/(?:app\/)?(?:prompts|chats|chat)\/([^/?#]+)/
@@ -103,7 +104,10 @@ function serviceFromUrl(rawUrl) {
   try {
     const host = new URL(rawUrl).hostname.toLowerCase();
     if (host === "chatgpt.com" || host === "chat.openai.com") return "chatgpt";
-    if (host === "gemini.google.com") return "gemini";
+    if (host === "gemini.google.com") {
+      const url = new URL(rawUrl);
+      return /canvas/i.test(`${url.pathname} ${url.search} ${url.hash}`) ? "gemini_canvas" : "gemini";
+    }
     if (host === "claude.ai" || host.endsWith(".claude.ai")) return "claude";
     if (host === "aistudio.google.com") return "aistudio";
     return "unknown";
@@ -160,6 +164,7 @@ function normalizeEvent(payload) {
     thinkingLabel: String(payload.thinkingLabel || ""),
     errorText: String(payload.errorText || ""),
     modelLabel: String(payload.modelLabel || ""),
+    artifactLinks: normalizeArtifactLinks(payload.artifactLinks),
     signals: payload.signals && typeof payload.signals === "object" ? payload.signals : {}
   };
 
@@ -183,12 +188,24 @@ function normalizeEvent(payload) {
     conversationId: event.conversationId,
     userText: event.userText,
     assistantText: event.assistantText,
+    artifactLinks: event.artifactLinks,
     thinkingLabel: event.thinkingLabel,
     errorText: event.errorText,
     modelLabel: event.modelLabel
   }));
 
   return event;
+}
+
+function normalizeArtifactLinks(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(item => ({
+      label: trimText(String(item && item.label || "")),
+      href: trimText(String(item && item.href || ""))
+    }))
+    .filter(item => item.href)
+    .slice(0, 20);
 }
 
 function shouldStore(event) {

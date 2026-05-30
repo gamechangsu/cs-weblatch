@@ -1,6 +1,6 @@
 # CS WebLatch
 
-CS WebLatch is a Codex skill for sending prompts to conversational AI web services through Chrome and reading completed responses through a local Latch bridge. The bundled adapters currently target ChatGPT Web, Gemini Web, Claude Web, and Google AI Studio.
+CS WebLatch is a Codex skill for sending prompts to conversational AI web services through Chrome and reading completed responses through a local Latch bridge. The bundled adapters currently target ChatGPT Web, Gemini Web, Gemini Canvas, Claude Web, and Google AI Studio.
 
 The skill includes:
 

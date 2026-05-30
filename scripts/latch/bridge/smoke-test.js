@@ -146,6 +146,7 @@ async function waitForHealth(timeoutMs) {
 
     const serviceCases = [
       { service: "gemini", url: "https://gemini.google.com/app/smoke", assistantText: "gemini pong" },
+      { service: "gemini_canvas", url: "https://gemini.google.com/app/smoke?canvas=1", assistantText: "canvas pong" },
       { service: "claude", url: "https://claude.ai/chat/smoke", assistantText: "claude pong" },
       { service: "aistudio", url: "https://aistudio.google.com/prompts/smoke", assistantText: "aistudio pong" }
     ];

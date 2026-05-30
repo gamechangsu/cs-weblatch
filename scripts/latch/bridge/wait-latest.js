@@ -214,9 +214,11 @@ function watchLostEvent(event) {
 function conversationUrl(service, conversationId) {
   if (service === "chatgpt" && conversationId) return `https://chatgpt.com/c/${conversationId}`;
   if (service === "claude" && conversationId) return `https://claude.ai/chat/${conversationId}`;
+  if (service === "gemini_canvas" && conversationId) return `https://gemini.google.com/app/${conversationId}`;
   if (service === "gemini" && conversationId) return `https://gemini.google.com/app/${conversationId}`;
   if (service === "aistudio" && conversationId) return `https://aistudio.google.com/prompts/${conversationId}`;
   if (service === "claude") return "https://claude.ai/";
+  if (service === "gemini_canvas") return "https://gemini.google.com/";
   if (service === "gemini") return "https://gemini.google.com/";
   if (service === "aistudio") return "https://aistudio.google.com/";
   return "https://chatgpt.com/";

@@ -1,11 +1,11 @@
 ---
 name: cs-weblatch
-description: Use CS WebLatch when Codex needs to talk to a conversational AI web service in Chrome through a local Latch bridge. The bundled implementation targets ChatGPT/GPT Web, Gemini Web, Claude Web, and Google AI Studio, including requests to ask a specific web AI service, model, or mode from Codex. Use this skill to send prompts through the browser, wait for completed web responses, and retrieve the final answer without repeated DOM polling.
+description: Use CS WebLatch when Codex needs to talk to a conversational AI web service in Chrome through a local Latch bridge. The bundled implementation targets ChatGPT/GPT Web, Gemini Web, Gemini Canvas, Claude Web, and Google AI Studio, including requests to ask a specific web AI service, model, or mode from Codex. Use this skill to send prompts through the browser, wait for completed web responses, and retrieve the final answer without repeated DOM polling.
 ---
 
 # CS WebLatch
 
-Use CS WebLatch as the default completion channel whenever the task is to ask a conversational AI web service in Chrome from Codex. Invoke it as `$cs-weblatch`. The bundled extension has adapters for ChatGPT Web, Gemini Web, Claude Web, and Google AI Studio. It uses a Chrome extension plus local Latch bridge that watches web chat responses and exposes the latest state at `http://127.0.0.1:8765`.
+Use CS WebLatch as the default completion channel whenever the task is to ask a conversational AI web service in Chrome from Codex. Invoke it as `$cs-weblatch`. The bundled extension has adapters for ChatGPT Web, Gemini Web, Gemini Canvas, Claude Web, and Google AI Studio. It uses a Chrome extension plus local Latch bridge that watches web chat responses and exposes the latest state at `http://127.0.0.1:8765`.
 
 ## Local Setup
 
@@ -47,11 +47,12 @@ GET http://127.0.0.1:8765/stream
    - If the Chrome extension is not loaded, load the unpacked extension from `scripts/latch/extension/`.
 
 2. Use the Chrome plugin to operate the target web chat.
-   - Supported service names are `chatgpt`, `gemini`, `claude`, and `aistudio`.
+   - Supported service names are `chatgpt`, `gemini`, `gemini_canvas`, `claude`, and `aistudio`.
    - Default to `chatgpt` unless the user explicitly requests another supported service.
    - Open service home URLs as needed:
      - ChatGPT: `https://chatgpt.com/`
      - Gemini: `https://gemini.google.com/`
+     - Gemini Canvas: `https://gemini.google.com/`
      - Claude: `https://claude.ai/`
      - AI Studio: `https://aistudio.google.com/`
    - Use a Codex-owned work tab by default; do not borrow arbitrary user chat tabs.
@@ -63,6 +64,7 @@ GET http://127.0.0.1:8765/stream
    - If the requested model/mode is not visible or cannot be selected, report that and proceed only if the user's instruction allows fallback.
    - Do not encode personal account names, emails, subscription status, billing assumptions, or API-key preferences into the skill.
    - Treat account selection, paid-plan access, and API-key choices as per-user runtime details. If they matter for the current service, inspect the visible page or ask the user instead of hardcoding an assumption.
+   - For Gemini Canvas, retrieve text/code/document content from the Canvas DOM. Do not use screenshot interpretation as the primary extraction path.
    - Before sending, record the current bridge `latestId` from `GET /health`; use `0` if there is no latest id.
    - Save the exact prompt text to a temporary UTF-8 file when practical.
    - Send the user's prompt through the web chat composer.
@@ -99,13 +101,14 @@ Treat `status: "done"` from Latch as the authoritative completion signal.
 
 Useful event fields:
 
-- `service`: `chatgpt`, `gemini`, `claude`, `aistudio`, or `unknown`
+- `service`: `chatgpt`, `gemini`, `gemini_canvas`, `claude`, `aistudio`, or `unknown`
 - `serviceLabel`: human-readable service name
 - `status`: `idle`, `draft`, `thinking`, `streaming`, `done`, or `error`
 - `url`: service conversation URL
 - `conversationId`: service conversation/chat id when visible in the URL
 - `userText`: latest user prompt
 - `assistantText`: captured ChatGPT response
+- `artifactLinks`: structured artifact/document/code links when a service exposes them, used by Gemini Canvas when available
 - `thinkingLabel`: visible thinking duration when present
 - `modelLabel`: visible model/mode label when present
 
@@ -155,6 +158,12 @@ Wait for a non-default service:
 
 ```powershell
 npm run wait -- --service claude --after-id 14 --prompt-file .\prompt.txt --json
+```
+
+Wait for Gemini Canvas text/code output:
+
+```powershell
+npm run wait -- --service gemini_canvas --after-id 14 --prompt-file .\prompt.txt --json
 ```
 
 Strict wait with work-tab movement detection:
