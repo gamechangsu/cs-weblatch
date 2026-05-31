@@ -6,10 +6,12 @@
   "scripts": {
     "bridge": "node bridge/server.js",
     "start": "node bridge/server.js",
+    "status": "node bridge/status.js",
+    "session": "node bridge/session.js",
     "wait": "node bridge/wait-latest.js",
     "latest": "node bridge/wait-latest.js --once",
     "text": "node bridge/wait-latest.js --once --text",
     "smoke": "node bridge/smoke-test.js",
-    "check": "node --check bridge/server.js && node --check bridge/wait-latest.js && node --check bridge/smoke-test.js && node --check extension/background.js && node --check extension/content.js"
+    "check": "node --check bridge/server.js && node --check bridge/status.js && node --check bridge/session.js && node --check bridge/wait-latest.js && node --check bridge/smoke-test.js && node --check extension/background.js && node --check extension/content.js"
   }
 }

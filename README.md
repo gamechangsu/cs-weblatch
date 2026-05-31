@@ -26,6 +26,8 @@ scripts/latch/extension/
 Useful bridge commands:
 
 ```powershell
+npm run status
+npm run session
 npm run wait
 npm run text
 npm run check
@@ -38,3 +40,10 @@ http://127.0.0.1:8765
 ```
 
 See `SKILL.md` for the full Codex workflow.
+
+Durable wait sessions are available for long or interrupt-prone web AI runs:
+
+```powershell
+npm run session -- start --service gemini --after-id 14 --prompt-file .\prompt.txt --json
+npm run session -- poll --session <sessionId> --json
+```

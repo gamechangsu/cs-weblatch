@@ -25,6 +25,8 @@ Run bridge commands from `scripts/latch/`:
 
 ```powershell
 npm run bridge
+npm run status
+npm run session
 npm run wait
 npm run text
 ```
@@ -42,6 +44,7 @@ GET http://127.0.0.1:8765/stream
 
 1. Ensure the Latch bridge is running.
    - Check `GET /health` first.
+   - Prefer `npm run status -- --json` when diagnosing whether bridge events, service scope, and latest event freshness look usable.
    - If unavailable, start `npm run bridge` from `scripts/latch/` and keep that process running.
    - Do not ask the user to operate the Latch UI; there is no user-facing popup.
    - If the Chrome extension is not loaded, load the unpacked extension from `scripts/latch/extension/`.
@@ -67,10 +70,13 @@ GET http://127.0.0.1:8765/stream
    - For Gemini Canvas, retrieve text/code/document content from the Canvas DOM. Do not use screenshot interpretation as the primary extraction path.
    - Before sending, record the current bridge `latestId` from `GET /health`; use `0` if there is no latest id.
    - Save the exact prompt text to a temporary UTF-8 file when practical.
+   - For long or interrupt-prone runs, create a durable wait session before sending:
+     `npm run session -- start --service <name> --after-id <latestId> --prompt-file <promptFile> --conversation <id> --tab-id <tabId> --target-url <url> --json`.
    - Send the user's prompt through the web chat composer.
 
 3. Wait through Latch, not repeated browser checks.
    - Prefer `npm run wait -- --after-id <latestId> --prompt-file <promptFile> --json`.
+   - If a durable session was created, prefer `npm run session -- poll --session <sessionId> --json`; it reuses the stored service, prompt, conversation, tab, and watch-lost filters.
    - Pass `--service <name>` whenever using Gemini, Claude, AI Studio, or any non-default service.
    - If the current conversation id is known, pass it with `npm run wait -- --conversation <id>` or query `conversationId=<id>`.
    - If the Chrome tab id or Latch page session id is known, add `--tab-id <id>` or `--page-session <id>`.
@@ -115,6 +121,7 @@ Useful event fields:
 ## Failure Handling
 
 - If `/health` fails, start the bridge from the Latch project.
+- For agent integrations, pass `--json` or set `LATCH_JSON_ERRORS=1` so wait/session/status failures return a parseable `{ ok:false, status:"error", error:{...} }` envelope.
 - If the bridge is healthy but no service events arrive, ask the user to reload the target web chat tab and reload the `Latch` extension from `scripts/latch/extension/` in `chrome://extensions`; do not try to automate `chrome://extensions`.
 - If Chrome automation cannot communicate with the Codex Chrome Extension, follow the Chrome skill troubleshooting path.
 - If the target service shows login, CAPTCHA, payment, account consent, API key setup, or another user-gated screen, stop and ask the user to handle it.
@@ -134,6 +141,19 @@ Latest JSON:
 
 ```powershell
 npm run wait -- --once --json
+```
+
+Bridge status:
+
+```powershell
+npm run status -- --service gemini --json
+```
+
+Create and poll a durable wait session:
+
+```powershell
+npm run session -- start --service gemini --after-id 14 --prompt-file .\prompt.txt --conversation <conversationId> --tab-id <tabId> --target-url <url> --json
+npm run session -- poll --session <sessionId> --json
 ```
 
 Latest response text:

@@ -51,9 +51,13 @@ function stableHash(value) {
   return (hash >>> 0).toString(36);
 }
 
-function runWait(args) {
+function runScript(scriptName, args, env = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(__dirname, "wait-latest.js"), ...args], {
+    const child = spawn(process.execPath, [path.join(__dirname, scriptName), ...args], {
+      env: {
+        ...process.env,
+        ...env
+      },
       stdio: ["ignore", "pipe", "pipe"]
     });
     let stdout = "";
@@ -67,12 +71,16 @@ function runWait(args) {
     child.on("error", reject);
     child.on("close", code => {
       if (code !== 0) {
-        reject(new Error(`wait-latest exited ${code}: ${stderr || stdout}`));
+        reject(new Error(`${scriptName} exited ${code}: ${stderr || stdout}`));
         return;
       }
       resolve({ stdout, stderr });
     });
   });
+}
+
+function runWait(args) {
+  return runScript("wait-latest.js", args);
 }
 
 async function waitForHealth(timeoutMs) {
@@ -128,6 +136,12 @@ async function waitForHealth(timeoutMs) {
     const latest = await requestJson("GET", "/latest");
     if (latest.assistantText !== "pong") {
       throw new Error("Latest event mismatch");
+    }
+
+    const statusResult = await runScript("status.js", ["--url", BASE_URL, "--service", "chatgpt", "--json"]);
+    const statusJson = JSON.parse(statusResult.stdout);
+    if (!statusJson.ok || statusJson.capabilityState === "fail") {
+      throw new Error("Status command did not report usable bridge state");
     }
 
     await requestJson("POST", "/events", {
@@ -234,6 +248,43 @@ async function waitForHealth(timeoutMs) {
     const recoveredEvent = JSON.parse(recoveredWatch.stdout);
     if (recoveredEvent.status === "watch_lost") {
       throw new Error("Stale watch-lost event was returned after recovery");
+    }
+
+    const sessionStart = await runScript("session.js", [
+      "start",
+      "--url", BASE_URL,
+      "--service", "chatgpt",
+      "--after-id", "0",
+      "--conversation", "session-target",
+      "--tab-id", "456",
+      "--prompt", "session ping",
+      "--json"
+    ], { LATCH_DATA_DIR: tempDir });
+    const sessionJson = JSON.parse(sessionStart.stdout);
+    if (!sessionJson.ok || !sessionJson.sessionId) {
+      throw new Error("Session start did not return a session id");
+    }
+
+    await requestJson("POST", "/events", {
+      service: "chatgpt",
+      status: "done",
+      url: "https://chatgpt.com/c/session-target",
+      conversationId: "session-target",
+      tabId: 456,
+      userText: "session ping",
+      assistantText: "session pong"
+    });
+
+    const sessionPoll = await runScript("session.js", [
+      "poll",
+      "--url", BASE_URL,
+      "--session", sessionJson.sessionId,
+      "--timeout", "1000",
+      "--json"
+    ], { LATCH_DATA_DIR: tempDir });
+    const pollJson = JSON.parse(sessionPoll.stdout);
+    if (pollJson.status !== "done" || pollJson.assistantText !== "session pong") {
+      throw new Error("Session poll did not recover the matching response");
     }
 
     console.log("Smoke test passed");

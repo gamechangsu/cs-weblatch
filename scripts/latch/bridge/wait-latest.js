@@ -21,6 +21,7 @@ const opts = {
   promptFile: valueAfter("--prompt-file") || "",
   timeoutMs: Number(valueAfter("--timeout") || 10 * 60 * 1000),
   json: args.includes("--json"),
+  jsonErrors: args.includes("--json") || process.env.LATCH_JSON_ERRORS === "1",
   once: args.includes("--once"),
   text: args.includes("--text"),
   watchLost: args.includes("--watch-lost"),
@@ -33,7 +34,7 @@ if (opts.help) {
 Options:
   --url <url>             Bridge URL. Default: ${DEFAULT_URL}
   --token <token>         Optional bridge token.
-  --service <name>        Restrict to one service: chatgpt, gemini, claude, or aistudio.
+  --service <name>        Restrict to one service: chatgpt, gemini, gemini_canvas, claude, or aistudio.
   --status <status>       Status to wait for. Default: done
   --conversation <id>     Restrict to one service conversation/chat id.
   --page-session <id>     Restrict to one Latch page session id.
@@ -371,6 +372,51 @@ function waitForStream() {
   const event = await waitForStream();
   printEvent(event);
 })().catch(error => {
-  console.error(error && error.message ? error.message : String(error));
+  if (opts.jsonErrors) {
+    console.error(JSON.stringify(errorEnvelope(error), null, 2));
+  } else {
+    console.error(error && error.message ? error.message : String(error));
+  }
   process.exit(1);
 });
+
+function errorEnvelope(error) {
+  const message = error && error.message ? error.message : String(error);
+  let errorCode = "latch.wait-failed";
+  let retryHint = "inspect-bridge";
+  if (/Timed out after/i.test(message)) {
+    errorCode = "latch.poll-timeout";
+    retryHint = "increase-timeout-or-check-service-tab";
+  } else if (/ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|socket hang up/i.test(message)) {
+    errorCode = "latch.bridge-unreachable";
+    retryHint = "start-bridge";
+  } else if (/ENOENT|no such file/i.test(message)) {
+    errorCode = "latch.prompt-file";
+    retryHint = "check-prompt-file";
+  } else if (/^HTTP \d+:/i.test(message)) {
+    errorCode = "latch.bridge-http";
+    retryHint = "inspect-bridge-response";
+  } else if (/Unexpected token|JSON/i.test(message)) {
+    errorCode = "latch.invalid-json";
+    retryHint = "inspect-bridge-response";
+  }
+
+  return {
+    ok: false,
+    status: "error",
+    error: {
+      name: error && error.name ? error.name : "Error",
+      errorCode,
+      stage: "wait",
+      message,
+      retryHint,
+      evidence: {
+        url: opts.baseUrl,
+        service: opts.service,
+        conversationId: opts.conversationId,
+        tabId: opts.tabId || null,
+        afterId: opts.afterId || null
+      }
+    }
+  };
+}
